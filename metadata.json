@@ -1,0 +1,8 @@
+{
+  "name": "P2P Video Chat",
+  "description": "A peer-to-peer video chat application built with React and WebRTC. Users can connect directly with each other by exchanging connection details and select their desired video quality for the call.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
