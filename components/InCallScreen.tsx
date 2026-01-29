@@ -42,8 +42,8 @@ const InCallScreen: React.FC<InCallScreenProps> = ({
     if (localStream) {
       const videoTrack = localStream.getVideoTracks()[0];
       if (videoTrack) {
-        // @ts-ignore - getCapabilities is standard but typescript definition might be missing in some versions
-        const capabilities = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
+        // Cast to any to access torch capability which is not yet in standard types
+        const capabilities = (videoTrack.getCapabilities ? videoTrack.getCapabilities() : {}) as any;
         if (capabilities.torch) {
           setHasTorch(true);
         }

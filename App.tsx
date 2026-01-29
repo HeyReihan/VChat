@@ -68,7 +68,47 @@ const App: React.FC = () => {
     sharedSecret.current = null;
     keyPair.current = null;
     setAppState('idle');
+    setRemoteNetworkQuality('unknown');
   }, [localStream]);
+
+  // Monitor Network Quality
+  useEffect(() => {
+    let interval: ReturnType<typeof setInterval>;
+    if (appState === 'connected') {
+      interval = setInterval(async () => {
+        if (pc.current) {
+          const stats = await pc.current.getStats();
+          let packetsLost = 0;
+          let packetsReceived = 0;
+          
+          stats.forEach(report => {
+            if (report.type === 'inbound-rtp' && report.kind === 'video') {
+              packetsLost += report.packetsLost || 0;
+              packetsReceived += report.packetsReceived || 0;
+            }
+          });
+          
+          if (packetsReceived > 0) {
+            const lossRate = packetsLost / (packetsLost + packetsReceived);
+            if (lossRate < 0.01) setRemoteNetworkQuality('excellent');
+            else if (lossRate < 0.05) setRemoteNetworkQuality('good');
+            else if (lossRate < 0.1) setRemoteNetworkQuality('fair');
+            else setRemoteNetworkQuality('poor');
+          } else {
+             // Fallback if no packets yet
+             if (pc.current.iceConnectionState === 'connected') {
+                 setRemoteNetworkQuality('good');
+             } else {
+                 setRemoteNetworkQuality('unknown');
+             }
+          }
+        }
+      }, 3000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [appState]);
 
   const setupPeerConnection = useCallback(() => {
     const peerConnection = new RTCPeerConnection(ICE_SERVERS);
@@ -94,6 +134,7 @@ const App: React.FC = () => {
         reconnectAttempts.current = 0;
       } else if (state === 'disconnected') {
         setAppState('reconnecting');
+        setRemoteNetworkQuality('unknown');
         
         // Start retry logic if not already running
         if (!reconnectTimerRef.current) {
