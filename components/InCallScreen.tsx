@@ -3,9 +3,10 @@ import VideoPlayer from './VideoPlayer';
 import ChatPanel from './ChatPanel';
 import NetworkQualityIndicator from './NetworkQualityIndicator';
 import { HangUpIcon, MicOnIcon, MicOffIcon, VideoOnIcon, VideoOffIcon, ChatIcon } from './Icons';
-import type { Message, NetworkQuality } from '../types';
+import type { Message, NetworkQuality, AppState } from '../types';
 
 interface InCallScreenProps {
+  appState: AppState;
   localStream: MediaStream | null;
   remoteStream: MediaStream | null;
   onHangup: () => void;
@@ -19,6 +20,7 @@ interface InCallScreenProps {
 }
 
 const InCallScreen: React.FC<InCallScreenProps> = ({
+  appState,
   localStream,
   remoteStream,
   onHangup,
@@ -46,6 +48,17 @@ const InCallScreen: React.FC<InCallScreenProps> = ({
               </div>
             </div>
           )}
+          
+          {appState === 'reconnecting' && (
+            <div className="absolute inset-0 bg-black/80 flex items-center justify-center z-50">
+                <div className="text-center">
+                    <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-yellow-500 mx-auto mb-4"></div>
+                    <h3 className="text-xl font-bold text-white mb-2">Connection Lost</h3>
+                    <p className="text-gray-300">Attempting to reconnect...</p>
+                </div>
+            </div>
+          )}
+
           <div className="absolute top-4 right-4 z-10">
             <NetworkQualityIndicator quality={remoteNetworkQuality} />
           </div>

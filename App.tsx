@@ -23,6 +23,9 @@ const App: React.FC = () => {
   const dataChannel = useRef<RTCDataChannel | null>(null);
   const keyPair = useRef<CryptoKeyPair | null>(null);
   const sharedSecret = useRef<CryptoKey | null>(null);
+  
+  const reconnectTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const reconnectAttempts = useRef(0);
 
   const cleanup = useCallback(() => {
     if (pc.current) {
@@ -40,6 +43,13 @@ const App: React.FC = () => {
       dataChannel.current.close();
       dataChannel.current = null;
     }
+    
+    if (reconnectTimerRef.current) {
+      clearInterval(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    reconnectAttempts.current = 0;
+
     localStream?.getTracks().forEach(track => track.stop());
     setLocalStream(null);
     setRemoteStream(null);
@@ -48,7 +58,7 @@ const App: React.FC = () => {
     setMessages([]);
     setIsMicEnabled(true);
     setIsVideoEnabled(true);
-    setSharedSecret(null);
+    sharedSecret.current = null;
     keyPair.current = null;
     setAppState('idle');
   }, [localStream]);
@@ -66,13 +76,56 @@ const App: React.FC = () => {
     peerConnection.onconnectionstatechange = () => {
       const state = peerConnection.connectionState;
       setConnectionState(state);
+      
       if (state === 'connected') {
         setAppState('connected');
         playConnectSound();
-      } else if (['disconnected', 'failed', 'closed'].includes(state)) {
+        if (reconnectTimerRef.current) {
+          clearInterval(reconnectTimerRef.current);
+          reconnectTimerRef.current = null;
+        }
+        reconnectAttempts.current = 0;
+      } else if (state === 'disconnected') {
+        setAppState('reconnecting');
+        
+        // Start retry logic if not already running
+        if (!reconnectTimerRef.current) {
+          reconnectAttempts.current = 0;
+          // Check every 2 seconds, max 5 retries (approx 10 seconds total)
+          reconnectTimerRef.current = setInterval(() => {
+            reconnectAttempts.current += 1;
+            console.log(`Reconnection attempt ${reconnectAttempts.current}/5`);
+            
+            // Note: The browser automatically attempts ICE restarts/recovery in the background.
+            // We monitor if it succeeds.
+            
+            if (peerConnection.connectionState === 'connected') {
+              // Recovery handled by the 'connected' block above, but we clean up timer here just in case
+              if (reconnectTimerRef.current) {
+                clearInterval(reconnectTimerRef.current);
+                reconnectTimerRef.current = null;
+              }
+              return;
+            }
+
+            if (reconnectAttempts.current >= 5) {
+              if (reconnectTimerRef.current) {
+                clearInterval(reconnectTimerRef.current);
+                reconnectTimerRef.current = null;
+              }
+              setAppState('disconnected');
+              playDisconnectSound();
+              setTimeout(cleanup, 3000);
+            }
+          }, 2000);
+        }
+      } else if (['failed', 'closed'].includes(state)) {
         setAppState('disconnected');
         playDisconnectSound();
-        // Simple auto-reconnect or cleanup logic could go here
+        if (reconnectTimerRef.current) {
+          clearInterval(reconnectTimerRef.current);
+          reconnectTimerRef.current = null;
+        }
         setTimeout(cleanup, 3000);
       }
     };
@@ -314,9 +367,11 @@ const App: React.FC = () => {
           />
         );
       case 'connected':
+      case 'reconnecting':
       case 'disconnected':
         return (
           <InCallScreen
+            appState={appState}
             localStream={localStream}
             remoteStream={remoteStream}
             onHangup={cleanup}
@@ -336,7 +391,12 @@ const App: React.FC = () => {
 
   return (
     <main className="bg-gray-900 text-white h-screen w-screen flex flex-col p-4">
-      {renderContent()}
+      <div className="flex-grow flex flex-col relative overflow-hidden min-h-0">
+        {renderContent()}
+      </div>
+      <footer className="mt-2 text-center text-gray-500 text-xs shrink-0">
+        {new Date().getFullYear()} &copy; P2P v-call
+      </footer>
     </main>
   );
 };

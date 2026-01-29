@@ -13,6 +13,7 @@ export type AppState =
   | 'creating_answer'
   | 'connecting'
   | 'connected'
+  | 'reconnecting'
   | 'disconnected';
 
 export interface Message {
