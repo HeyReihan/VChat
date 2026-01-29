@@ -1,8 +1,8 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import VideoPlayer from './VideoPlayer';
 import { CopyIcon } from './Icons';
 import type { AppState } from '../types';
-import { compressData } from '../utils';
+import { compressData, shortenUrl } from '../utils';
 
 interface SetupScreenProps {
   localStream: MediaStream | null;
@@ -29,6 +29,13 @@ const SetupScreen: React.FC<SetupScreenProps> = ({
 }) => {
   const [peerOfferCode, setPeerOfferCode] = useState('');
   const [peerAnswerCode, setPeerAnswerCode] = useState('');
+  const [shortLink, setShortLink] = useState('');
+  const [isShortening, setIsShortening] = useState(false);
+
+  // Reset short link when offer changes
+  useEffect(() => {
+    setShortLink('');
+  }, [offerSdp]);
 
   const copyToClipboard = (text: string, type: string) => {
     navigator.clipboard.writeText(text).then(() => {
@@ -97,7 +104,22 @@ const SetupScreen: React.FC<SetupScreenProps> = ({
   const renderCreatorState = () => {
     // Compress the SDP for the link to make it shorter
     const compressedSdp = offerSdp ? compressData(offerSdp) : '';
-    const shareLink = compressedSdp ? `${window.location.origin}${window.location.pathname}#c=${compressedSdp}` : '';
+    const longLink = compressedSdp ? `${window.location.origin}${window.location.pathname}#c=${compressedSdp}` : '';
+    const displayLink = shortLink || longLink;
+
+    const handleShorten = async () => {
+        if (!longLink) return;
+        setIsShortening(true);
+        try {
+            const url = await shortenUrl(longLink);
+            setShortLink(url);
+        } catch (error) {
+            console.error(error);
+            alert("Failed to shorten URL. The link might be too long for the service.");
+        } finally {
+            setIsShortening(false);
+        }
+    };
     
     return (
       <div className="flex flex-col md:flex-row space-y-4 md:space-y-0 md:space-x-4 h-full">
@@ -106,9 +128,18 @@ const SetupScreen: React.FC<SetupScreenProps> = ({
             <h3 className="font-bold text-lg mb-2 text-green-400">Step 1: Invite Your Peer</h3>
             <p className="text-sm text-gray-400 mb-3">Send this link for a one-click join:</p>
             <div className="relative">
-              <input type="text" readOnly value={shareLink} className="w-full p-2 pr-10 bg-gray-700 text-gray-300 rounded-md text-sm" onFocus={e => e.target.select()} />
-              <button onClick={() => copyToClipboard(shareLink, 'Link')} className="absolute top-1/2 right-2 -translate-y-1/2 p-1.5 bg-gray-600 hover:bg-gray-500 rounded text-gray-300"><CopyIcon/></button>
+              <input type="text" readOnly value={displayLink} className="w-full p-2 pr-10 bg-gray-700 text-gray-300 rounded-md text-sm" onFocus={e => e.target.select()} />
+              <button onClick={() => copyToClipboard(displayLink, 'Link')} className="absolute top-1/2 right-2 -translate-y-1/2 p-1.5 bg-gray-600 hover:bg-gray-500 rounded text-gray-300"><CopyIcon/></button>
             </div>
+            {!shortLink && (
+                 <button 
+                    onClick={handleShorten} 
+                    disabled={isShortening}
+                    className="mt-2 text-xs text-blue-400 hover:text-blue-300 underline focus:outline-none disabled:text-gray-500"
+                 >
+                    {isShortening ? 'Generating Short Link...' : 'Get Short URL'}
+                 </button>
+            )}
             <p className="text-xs text-gray-500 mt-3">Or, have them paste this manual code:</p>
             <textarea readOnly value={offerSdp || ''} className="w-full h-24 p-2 mt-1 bg-gray-700 text-gray-300 rounded-md resize-none text-xs" />
              <button onClick={() => copyToClipboard(offerSdp || '', 'Code')} className="mt-2 w-full text-sm bg-gray-600 hover:bg-gray-500 rounded py-1">Copy Manual Code</button>
