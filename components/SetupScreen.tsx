@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import VideoPlayer from './VideoPlayer';
-import { CopyIcon } from './Icons';
+import { CopyIcon, ChevronUpIcon, ChevronDownIcon } from './Icons';
 import type { AppState } from '../types';
 import { compressData, shortenUrl } from '../utils';
 
@@ -31,6 +31,7 @@ const SetupScreen: React.FC<SetupScreenProps> = ({
   const [peerAnswerCode, setPeerAnswerCode] = useState('');
   const [shortLink, setShortLink] = useState('');
   const [isShortening, setIsShortening] = useState(false);
+  const [isVideoCollapsed, setIsVideoCollapsed] = useState(false);
 
   // Reset short link when offer changes
   useEffect(() => {
@@ -195,11 +196,23 @@ const SetupScreen: React.FC<SetupScreenProps> = ({
   }
 
   return (
-    <div className="flex flex-col h-full space-y-4">
-        <div className="w-full md:w-1/2 lg:w-1/3 self-center rounded-lg overflow-hidden shadow-lg flex-shrink-0">
-            <VideoPlayer stream={localStream} isMuted={true} isLocal={true} />
+    <div className="flex flex-col h-full space-y-4 overflow-y-auto">
+        <div className="w-full md:w-1/2 lg:w-1/3 self-center flex-shrink-0">
+             <button 
+                onClick={() => setIsVideoCollapsed(!isVideoCollapsed)}
+                className="w-full flex items-center justify-center space-x-2 text-gray-400 hover:text-white mb-2 text-sm focus:outline-none"
+             >
+                <span>{isVideoCollapsed ? 'Show Video Preview' : 'Hide Video Preview'}</span>
+                {isVideoCollapsed ? <ChevronDownIcon /> : <ChevronUpIcon />}
+             </button>
+             
+             {!isVideoCollapsed && (
+                <div className="rounded-lg overflow-hidden shadow-lg">
+                    <VideoPlayer stream={localStream} isMuted={true} isLocal={true} />
+                </div>
+             )}
         </div>
-        <div className="flex-grow bg-gray-800 p-4 rounded-lg flex flex-col">
+        <div className="flex-grow bg-gray-800 p-4 rounded-lg flex flex-col min-h-0">
             {renderContent()}
         </div>
     </div>
