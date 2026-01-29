@@ -18,7 +18,9 @@ export type AppState =
 
 export interface Message {
   sender: 'me' | 'peer';
-  text: string;
+  content: string; // text content or base64 data
+  type: 'text' | 'image' | 'file';
+  fileName?: string;
   timestamp: number;
 }
 
@@ -29,9 +31,17 @@ export interface EncryptedMessage {
   payload: string;
 }
 
+export interface ChatChunkMessage {
+  type: 'chat_chunk';
+  messageId: string;
+  chunkIndex: number;
+  totalChunks: number;
+  payload: string;
+}
+
 export interface PublicKeyMessage {
   type: 'key_exchange';
   payload: JsonWebKey;
 }
 
-export type SignalingMessage = EncryptedMessage | PublicKeyMessage;
+export type SignalingMessage = EncryptedMessage | PublicKeyMessage | ChatChunkMessage;

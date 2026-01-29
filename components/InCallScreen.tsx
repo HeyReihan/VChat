@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import VideoPlayer from './VideoPlayer';
 import ChatPanel from './ChatPanel';
 import NetworkQualityIndicator from './NetworkQualityIndicator';
-import { HangUpIcon, MicOnIcon, MicOffIcon, VideoOnIcon, VideoOffIcon, ChatIcon } from './Icons';
+import { HangUpIcon, MicOnIcon, MicOffIcon, VideoOnIcon, VideoOffIcon, ChatIcon, VolumeIcon, FlashOnIcon, FlashOffIcon } from './Icons';
 import type { Message, NetworkQuality, AppState } from '../types';
 
 interface InCallScreenProps {
@@ -12,7 +12,7 @@ interface InCallScreenProps {
   onHangup: () => void;
   onToggleMic: () => void;
   onToggleVideo: () => void;
-  onSendMessage: (text: string) => void;
+  onSendMessage: (content: string, type: 'text' | 'image' | 'file', fileName?: string) => void;
   isMicEnabled: boolean;
   isVideoEnabled: boolean;
   messages: Message[];
@@ -33,13 +33,45 @@ const InCallScreen: React.FC<InCallScreenProps> = ({
   remoteNetworkQuality,
 }) => {
   const [isChatVisible, setIsChatVisible] = useState(false);
+  const [volume, setVolume] = useState(1);
+  const [hasTorch, setHasTorch] = useState(false);
+  const [isTorchOn, setIsTorchOn] = useState(false);
+
+  // Check for torch capability
+  useEffect(() => {
+    if (localStream) {
+      const videoTrack = localStream.getVideoTracks()[0];
+      if (videoTrack) {
+        // @ts-ignore - getCapabilities is standard but typescript definition might be missing in some versions
+        const capabilities = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
+        if (capabilities.torch) {
+          setHasTorch(true);
+        }
+      }
+    }
+  }, [localStream]);
+
+  const toggleTorch = async () => {
+    if (!localStream) return;
+    const track = localStream.getVideoTracks()[0];
+    if (track) {
+      try {
+        const newState = !isTorchOn;
+        // @ts-ignore - applyConstraints for torch
+        await track.applyConstraints({ advanced: [{ torch: newState }] });
+        setIsTorchOn(newState);
+      } catch (err) {
+        console.error('Error toggling torch:', err);
+      }
+    }
+  };
 
   return (
     <div className="flex flex-col md:flex-row h-full bg-gray-900 text-white">
       <div className="flex-grow flex flex-col relative">
         <div className="flex-grow relative bg-black">
           {remoteStream ? (
-            <VideoPlayer stream={remoteStream} />
+            <VideoPlayer stream={remoteStream} volume={volume} />
           ) : (
             <div className="w-full h-full flex items-center justify-center bg-gray-800">
               <div className="text-center">
@@ -62,8 +94,32 @@ const InCallScreen: React.FC<InCallScreenProps> = ({
           <div className="absolute top-4 right-4 z-10">
             <NetworkQualityIndicator quality={remoteNetworkQuality} />
           </div>
-          <div className="absolute bottom-4 right-4 w-1/4 max-w-xs rounded-lg overflow-hidden shadow-lg z-10 border-2 border-gray-700">
+
+          <div className="absolute bottom-4 left-4 z-10 bg-black/50 p-2 rounded-lg backdrop-blur-sm flex items-center space-x-2">
+            <VolumeIcon />
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.1"
+              value={volume}
+              onChange={(e) => setVolume(parseFloat(e.target.value))}
+              className="w-24 h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer"
+              title="Remote Audio Volume"
+            />
+          </div>
+
+          <div className="absolute bottom-4 right-4 w-1/4 max-w-xs rounded-lg overflow-hidden shadow-lg z-10 border-2 border-gray-700 group">
             <VideoPlayer stream={localStream} isMuted={true} isLocal={true} />
+            {hasTorch && (
+                <button 
+                    onClick={toggleTorch}
+                    className="absolute top-2 right-2 p-1.5 bg-gray-800/70 hover:bg-gray-700 rounded-full text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                    title="Toggle Flashlight"
+                >
+                    {isTorchOn ? <FlashOnIcon /> : <FlashOffIcon />}
+                </button>
+            )}
           </div>
         </div>
         <div className="bg-gray-800 p-4 flex items-center justify-center space-x-4">

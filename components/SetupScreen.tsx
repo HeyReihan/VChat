@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import VideoPlayer from './VideoPlayer';
 import { CopyIcon } from './Icons';
 import type { AppState } from '../types';
+import { compressData } from '../utils';
 
 interface SetupScreenProps {
   localStream: MediaStream | null;
@@ -94,7 +95,10 @@ const SetupScreen: React.FC<SetupScreenProps> = ({
   );
 
   const renderCreatorState = () => {
-    const shareLink = offerSdp ? `${window.location.origin}${window.location.pathname}#code=${encodeURIComponent(btoa(offerSdp))}` : '';
+    // Compress the SDP for the link to make it shorter
+    const compressedSdp = offerSdp ? compressData(offerSdp) : '';
+    const shareLink = compressedSdp ? `${window.location.origin}${window.location.pathname}#c=${compressedSdp}` : '';
+    
     return (
       <div className="flex flex-col md:flex-row space-y-4 md:space-y-0 md:space-x-4 h-full">
         <div className="flex-1 flex flex-col space-y-4">

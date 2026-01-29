@@ -3,9 +3,12 @@ import IdleScreen from './components/IdleScreen';
 import SetupScreen from './components/SetupScreen';
 import InCallScreen from './components/InCallScreen';
 import { ICE_SERVERS, QUALITY_OPTIONS } from './constants';
-import type { AppState, Message, VideoQuality, NetworkQuality, SignalingMessage } from './types';
+import type { AppState, Message, VideoQuality, NetworkQuality, SignalingMessage, ChatChunkMessage } from './types';
 import { generateKeyPair, exportPublicKey, importPublicKey, deriveSharedSecret, encryptMessage, decryptMessage } from './crypto';
 import { playConnectSound, playDisconnectSound, playMessageSound } from './sounds';
+import { decompressData } from './utils';
+
+const CHUNK_SIZE = 16 * 1024; // 16KB
 
 const App: React.FC = () => {
   const [appState, setAppState] = useState<AppState>('idle');
@@ -26,6 +29,9 @@ const App: React.FC = () => {
   
   const reconnectTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const reconnectAttempts = useRef(0);
+
+  // Store incoming chunks: messageId -> { chunks: { index: payload }, total: number }
+  const incomingChunks = useRef<Record<string, { chunks: Record<number, string>, total: number }>>({});
 
   const cleanup = useCallback(() => {
     if (pc.current) {
@@ -49,6 +55,7 @@ const App: React.FC = () => {
       reconnectTimerRef.current = null;
     }
     reconnectAttempts.current = 0;
+    incomingChunks.current = {};
 
     localStream?.getTracks().forEach(track => track.stop());
     setLocalStream(null);
@@ -141,6 +148,35 @@ const App: React.FC = () => {
     pc.current = peerConnection;
   }, [localStream, cleanup]);
 
+  const handleDecryptedMessage = (decryptedText: string) => {
+      try {
+          // Try parsing as structured message (JSON)
+          const data = JSON.parse(decryptedText);
+          if (data && data.content && data.type) {
+             setMessages(prev => [...prev, { 
+                 sender: 'peer', 
+                 content: data.content, 
+                 type: data.type, 
+                 fileName: data.fileName, 
+                 timestamp: Date.now() 
+             }]);
+             playMessageSound();
+             return;
+          }
+      } catch (e) {
+          // Ignore, fallback to text
+      }
+
+      // Fallback for legacy plain text messages
+      setMessages(prev => [...prev, { 
+          sender: 'peer', 
+          content: decryptedText, 
+          type: 'text', 
+          timestamp: Date.now() 
+      }]);
+      playMessageSound();
+  };
+
   const setupDataChannel = useCallback(async () => {
     if (!pc.current) return;
   
@@ -159,6 +195,7 @@ const App: React.FC = () => {
       dc.onmessage = async (event) => {
         try {
           const message: SignalingMessage = JSON.parse(event.data);
+          
           if (message.type === 'key_exchange') {
             const peerPubKey = await importPublicKey(message.payload);
             const secret = await deriveSharedSecret(keyPair.current!.privateKey, peerPubKey);
@@ -176,11 +213,38 @@ const App: React.FC = () => {
           } else if (message.type === 'chat') {
             if (sharedSecret.current) {
               const decryptedText = await decryptMessage(sharedSecret.current, message.payload);
-              setMessages(prev => [...prev, { sender: 'peer', text: decryptedText, timestamp: Date.now() }]);
-              playMessageSound();
+              handleDecryptedMessage(decryptedText);
             } else {
               console.warn('Received chat message before shared secret was derived.');
             }
+          } else if (message.type === 'chat_chunk') {
+             if (sharedSecret.current) {
+                const { messageId, chunkIndex, totalChunks, payload } = message;
+                
+                if (!incomingChunks.current[messageId]) {
+                    incomingChunks.current[messageId] = { chunks: {}, total: totalChunks };
+                }
+                
+                incomingChunks.current[messageId].chunks[chunkIndex] = payload;
+                
+                // Check if complete
+                const receivedCount = Object.keys(incomingChunks.current[messageId].chunks).length;
+                if (receivedCount === totalChunks) {
+                    // Reassemble
+                    const orderedChunks = [];
+                    for (let i = 0; i < totalChunks; i++) {
+                        orderedChunks.push(incomingChunks.current[messageId].chunks[i]);
+                    }
+                    const fullEncryptedPayload = orderedChunks.join('');
+                    
+                    // Decrypt
+                    const decryptedText = await decryptMessage(sharedSecret.current, fullEncryptedPayload);
+                    handleDecryptedMessage(decryptedText);
+                    
+                    // Cleanup
+                    delete incomingChunks.current[messageId];
+                }
+             }
           }
         } catch (e) {
           console.error("Error processing data channel message: ", e);
@@ -224,8 +288,6 @@ const App: React.FC = () => {
     const offer = await pc.current.createOffer();
     await pc.current.setLocalDescription(offer);
     
-    // Trickle ICE candidates are not being used, so we wait for them to be gathered.
-    // A more robust solution would implement trickle ICE.
     await new Promise<void>(resolve => {
         if (pc.current?.iceGatheringState === 'complete') {
             resolve();
@@ -298,15 +360,44 @@ const App: React.FC = () => {
     }
   }, []);
 
-  const handleSendMessage = useCallback(async (text: string) => {
+  const handleSendMessage = useCallback(async (content: string, type: 'text' | 'image' | 'file' = 'text', fileName?: string) => {
     if (dataChannel.current && dataChannel.current.readyState === 'open' && sharedSecret.current) {
         try {
-            const encryptedText = await encryptMessage(sharedSecret.current, text);
-            const message: SignalingMessage = { type: 'chat', payload: encryptedText };
-            dataChannel.current.send(JSON.stringify(message));
-            setMessages(prev => [...prev, { sender: 'me', text, timestamp: Date.now() }]);
+            // Construct the structured payload
+            const rawPayload = JSON.stringify({ content, type, fileName });
+            
+            // Encrypt the entire payload
+            const encryptedText = await encryptMessage(sharedSecret.current, rawPayload);
+            
+            // Check size to decide strategy
+            if (encryptedText.length <= CHUNK_SIZE) {
+                // Send as single message
+                const message: SignalingMessage = { type: 'chat', payload: encryptedText };
+                dataChannel.current.send(JSON.stringify(message));
+            } else {
+                // Send as chunks
+                const messageId = Math.random().toString(36).substring(7);
+                const totalChunks = Math.ceil(encryptedText.length / CHUNK_SIZE);
+                
+                for (let i = 0; i < totalChunks; i++) {
+                    const start = i * CHUNK_SIZE;
+                    const end = start + CHUNK_SIZE;
+                    const chunk = encryptedText.substring(start, end);
+                    
+                    const chunkMessage: ChatChunkMessage = {
+                        type: 'chat_chunk',
+                        messageId,
+                        chunkIndex: i,
+                        totalChunks,
+                        payload: chunk
+                    };
+                    dataChannel.current.send(JSON.stringify(chunkMessage));
+                }
+            }
+
+            setMessages(prev => [...prev, { sender: 'me', content, type, fileName, timestamp: Date.now() }]);
         } catch (e) {
-            console.error("Encryption failed:", e);
+            console.error("Encryption/Send failed:", e);
         }
     }
   }, []);
@@ -328,10 +419,27 @@ const App: React.FC = () => {
   // Handle incoming connection code from URL hash
   useEffect(() => {
     const hash = window.location.hash;
-    if (hash.startsWith('#code=')) {
+    let sdp = '';
+    
+    if (hash.startsWith('#c=')) {
+        // Compressed format
+        const compressed = hash.substring('#c='.length);
+        const decompressed = decompressData(compressed);
+        if (decompressed) {
+            sdp = decompressed;
+        }
+    } else if (hash.startsWith('#code=')) {
+        // Legacy base64 format
         const encodedSdp = hash.substring('#code='.length);
         try {
-            const sdp = atob(decodeURIComponent(encodedSdp));
+            sdp = atob(decodeURIComponent(encodedSdp));
+        } catch (e) {
+             console.error("Failed to decode connection code from URL:", e);
+        }
+    }
+
+    if (sdp) {
+         try {
             // Automatically start the join flow if we have a local stream
             if (localStream) {
                 handleReceiveOffer(sdp);
@@ -339,7 +447,7 @@ const App: React.FC = () => {
                 window.history.replaceState(null, '', window.location.pathname + window.location.search);
             }
         } catch (e) {
-            console.error("Failed to decode connection code from URL:", e);
+            console.error("Failed to process SDP:", e);
         }
     }
   }, [localStream, handleReceiveOffer]);
